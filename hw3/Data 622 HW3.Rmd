@@ -1,0 +1,250 @@
+---
+title: "DATA 622 HW3"
+author: "Dennis Pong"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    code_folding: hide
+---
+
+```{r setup, cache=FALSE}
+library(knitr)
+library(rmdformats)
+library(tidyverse)
+library(caret) # For createDataPartition, featureplot, classification report
+library(corrplot) # For correlation matrix
+library(mice) # Multivariate Imputation By Chained Equations
+library(parallel)
+library(plyr)
+library(VIM)
+
+## Global options
+
+
+options(max.print="100")
+opts_knit$set(width=31)
+```
+
+# **K-Nearest Neighbors**
+
+```{r loading-data}
+loan_raw <- read.csv('https://raw.githubusercontent.com/metis-macys-66898/data622_fa2021/main/hw3/data/Loan_approval.csv', header = TRUE, na.strings = " ")
+loan_raw[loan_raw==""] <- NA
+loan_raw <- loan_raw %>% mutate_if(is.character, factor)
+loan <- loan_raw
+```
+
+## Processing
+
+Besides creating a data.frame called loan\_knn, I explicitly recoded the Y/N values into 1/0's.
+
+```{r}
+str(loan)
+
+loan_knn <- loan
+loan_knn$Loan_Status <- as.numeric(loan_knn$Loan_Status)-1 
+str(loan_knn)
+
+
+
+```
+
+Besides, I also used colSums to look for how many rows of missing values for each column in the loan\_knn data.frame.
+
+```{r}
+colSums(is.na(loan_knn))
+
+```
+
+After that, I plotted a histogram to better illustrate where are the missing values coming from. It's essentially another way of looking at the distribution of missing values.
+
+```{r}
+aggr_plot <- aggr(loan_knn, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, labels=names(data), cex.axis=.7, gap=3, ylab=c("Histogram of missing data","Pattern"))
+
+
+```
+
+There is a total of 6 columns that require imputation. They can be triaged into 4 different categories.
+
+Below we showed you where each of the 6 columns fall under and follow by the eventual method we used in the mice package. Mice package implements a method to deal with missing data. It's short for Multivariate Imputation by Chained Equations.
+
+**Categorical Variables with more than 2 levels:** Dependents(4) - ~~polyreg~~ -\> pmm
+
+**Categorical Variables with 2 levels:** Gender (2), Married(3), Credit\_History(11), Self\_Employed (6) - logreg
+
+**Discrete variable (ordered) with more than 2 levels:** Loan\_Amount\_Term (10) - polr
+
+**Continuous Variables:** LoanAmount (9) - pmm
+
+## Additional Data (Processing) Manipulation Steps
+
+So, first off, I need to convert Credit\_History to factors so that the mice model that I'm going to use can detect that column as a categorical variable.
+
+Combining ApplicantIncome and CoapplicantIncome into a new variable TotalIncome, and dropping the respective input columns. Loan\_ID doesn't help with the prediction obviously. So dropping it as well.
+
+```{r}
+
+loan_knn_pre_imp <- loan_knn
+loan_knn_pre_imp$Credit_History <- as.factor(loan_knn_pre_imp$Credit_History)
+
+
+
+loan_knn_pre_imp <- loan_knn_pre_imp %>% mutate(TotalIncome = ApplicantIncome + CoapplicantIncome)
+loan_knn_pre_imp <- loan_knn_pre_imp %>% select(-c('Loan_ID','ApplicantIncome','CoapplicantIncome'))
+
+# loan_knn_pre_imp[loan_knn_pre_imp$Dependents = "3+"] <- "3"
+
+# recode dependents 3+ to 3
+loan_knn_pre_imp$Dependents <- revalue(loan_knn_pre_imp$Dependents, c("3+"="3"))
+
+
+str(loan_knn_pre_imp)
+```
+
+I've set up a predictorMatrix where I can instruct mice to use which method for which column for imputation.
+
+Set seed = 501. Retrieved the results.
+
+```{r mice}
+# loan_knn_imp1 <- mice (loan_knn_pre_imp, method = c("",
+#                                                     "logreg",
+#                                                     "logreg",
+#                                                     "polyreg",
+#                                                     "",
+#                                                     "logreg",
+#                                                     "",
+#                                                     "",
+#                                                     "cart",
+#                                                     "polr",
+#                                                     "logreg",
+#                                                     "",
+#                                                     ""
+#                                                    ), seed=501, nnet.MaxNWts = 30100
+# )
+# 
+# loan_knn_imp1 <- mice (loan_knn_pre_imp, seed=501, nnet.MaxNWts = 30100)
+# 
+# loan_knn_imp2 <- mice (loan_knn_pre_imp, method = "rf", seed=501, nnet.MaxNWts = 30100)
+
+
+# loan_knn_imp2 <- parlmice(data = loan_knn_pre_imp, method = c(  "", 
+#                                                                 "logreg", 
+#                                                                 "logreg", 
+#                                                                 "polyreg", 
+#                                                                 "", 
+#                                                                 "", 
+#                                                                 "", 
+#                                                                 "", 
+#                                                                 "cart",
+#                                                                 "polr",
+#                                                                 "logreg",
+#                                                                 "",
+#                                                                 ""
+#                                                               ), cluster.seed = 501, nnet.MaxNWts = 30100, n.core = 2, n.imp.core = 150)
+
+
+
+init <- mice(loan_knn_pre_imp, maxit=0) 
+meth <- init$method
+predM <- init$predictorMatrix
+# meth[c('Loan_Amount_Term')] <- 'polr'
+# meth[c('LoanAmount')] <- 'cart' 
+meth[c('LoanAmount','Loan_Amount_Term')] <- 'norm'
+meth[c('Credit_History','Self_Employed','Gender','Married')] <- 'logreg'
+meth[c('Dependents')] <- 'polyreg'
+meth[c('Loan_Status','TotalIncome','Property_Area','Education')] = ''
+loan_knn_imp1 <- mice(loan_knn_pre_imp, method=meth, predictorMatrix=predM, seed=501)
+
+
+
+
+```
+
+After some manual examinations of the different imputed results, I've decided to go with imputed column \#3.
+
+```{r}
+# Manual examination 
+#Credit_History
+loan_knn[96:118,]
+loan_knn_imp1$imp$Credit_History
+#Married
+loan_knn[430:436,]
+loan_knn_imp1$imp$Married
+#Dependents
+loan_knn[227:229,]
+loan_knn_imp1$imp$Dependents
+
+
+loan_knn2 <- complete(loan_knn_imp1, 3) # 2nd argument if not provided is defaulted to 1
+```
+
+## **Modeling with KNN**
+
+First off, set seed = 688.
+
+Create training/test partitions by calling createDataPartition. p is set to .8 to mean 80/20 split for train/test set.
+
+Checking the structure of the train set (*knn\_train*)
+
+```{r}
+set.seed(688)
+# recoding Loan_Status back to categorical variable
+loan_knn2$Loan_Status <- as.factor(loan_knn2$Loan_Status)
+str(loan_knn2)
+
+
+# Data Partitioning
+trainIndex <- createDataPartition(loan_knn2$Loan_Status, p = .8, list = FALSE, times = 1)
+knn_train <- loan_knn2[trainIndex,]
+knn_test  <- loan_knn2[-trainIndex,]
+
+
+
+str(knn_train)
+```
+
+Checking the structure of the test set (*knn\_test*)
+
+```{r}
+str(knn_test)
+```
+
+### Cross Validation
+
+Perform a repeated 11-fold cross-validation, meaning the number of complete sets of folks to compute is 11. For this classification problem, we assigned our fitted model to *knn.fit.* The cross-validated results is plugged in the form of *trControl.*
+
+```{r}
+trControl <- trainControl(method  = "repeatedcv",
+                          repeats  = 11)
+knn.fit <- train(Loan_Status ~ .,
+             method     = "knn",
+             tuneGrid   = expand.grid(k = 1:10),
+             trControl  = trControl,
+             preProcess = c("center","scale"),
+             data       = knn_train
+             )
+```
+
+Since our target variable is a binary factor of 2, by default, we use Accuracy as the determining performance metric. The optimal K is thus determined by Accuracy. **K = 9 was finally selected.** \# of neighbors is 9.
+
+```{r}
+# getOption("max.print")
+knn.fit
+```
+
+```{r echo=FALSE}
+plot(knn.fit)
+```
+
+Accuracy is 77.1% while balanced accuracy is only 67.48%.
+
+```{r}
+
+knn_pred <- predict(knn.fit, newdata = knn_test)
+# options('max.print' = 100)  
+# getOption("max.print")
+confusionMatrix(knn_pred, knn_test$Loan_Status)
+
+
+```
