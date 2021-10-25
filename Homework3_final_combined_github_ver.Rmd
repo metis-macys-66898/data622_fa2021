@@ -1,0 +1,763 @@
+---
+title: "Homework3"
+author: "Devin Teran, Dennis Pong, Richard Zheng, Katie Evers"
+date: "10/4/2021"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rmdformats)
+library(dplyr)
+library(ggplot2)
+library(dplyr)
+library(kableExtra)
+library(gridExtra)
+require(ISLR)
+require(tree)
+library(GGally)
+library(mice) # Multivariate Imputation By Chained Equations
+library(psych)
+library(visdat)
+library(tidyr)
+library(knitr)
+library(rmdformats)
+library(tidyverse)
+library(caret) # Classification And REgression Training - for createDataPartition, featureplot, classification report, and other key functions to streamline the model training process.
+library(corrplot) # For correlation matrix
+library(randomForest)
+library(MASS)
+library(doParallel)
+library(parallel)
+library(plyr)
+library(VIM)
+
+options(max.print="100")
+opts_knit$set(width=31)
+```
+
+```{r import-data}
+# na.strings = "" will treat empty string as NA
+loan_data <- read.csv('https://raw.githubusercontent.com/metis-macys-66898/data622_fa2021/main/hw3/data/Loan_approval.csv', header = TRUE, na.strings = "")
+
+loan_raw <- read.csv('https://raw.githubusercontent.com/metis-macys-66898/data622_fa2021/main/hw3/data/Loan_approval.csv', header = TRUE)
+```
+
+## 1. Exploratory Data Analysis
+
+Our loan data has 614 rows and 13 columns, 8 of which are categorical and 5 are numerical. The target variable is **Loan\_Status**, which can be either **Y (yes)** or **N (no)**. This let's us know if the applicant's loan is approved. There are 7 variables that have blank values. The one with the most blank values is **Credit\_History** with 50 blanks.
+
+```{r view}
+loan_data %>% kbl() %>% kable_styling() %>% scroll_box(width = "750px", height = "250px")
+
+summary(loan_data) %>% kbl() %>% kable_styling() %>% scroll_box(width = "750px", height = "250px")
+
+missing <- loan_data %>% mutate_if(is.character, list(~na_if(.,""))) 
+
+missing%>%
+  summarise_all(list(~sum(is.na(.)))) %>%
+  gather(key="Variable", value="Number_Missing") %>%
+  arrange(desc(Number_Missing)) %>% kbl() %>% kable_styling() %>% scroll_box(width = "750px", height = "250px")
+```
+
+### Factors
+
+```{r to-factor}
+loan_data <- loan_data %>% mutate_if(is.character, factor)
+```
+
+### The following section we'll continue to look at the data from the raw perspective (loan\_raw).
+
+### **Categorical Variables**
+
+There are several variables which have blank values "". These data points may have been intentionally skipped by customers from banks during the data collection process or they may just be missing. We will handle this later on.\
+\* **Loan\_ID:** unique identifier\
+\* **Gender:** either Male or Female or blank\
+\* **Married:** either No or Yes or blank\
+\* **Dependents:** how many dependents does someone have? 0, 1, 2, 3+ or blank\
+\* **Education:** Graduate or Not Graduate\
+\* **Self\_Employed:** No or Yes or blank\
+\* **Property\_Area:** Urban, Rural or Semiurban\
+\* **Loan\_status:** Y (yes) or N (no)\
+\* **Credit\_History:** does the credit history meet the guidelines? 1 = Yes, 0 = No
+
+```{r gender-tables,include=FALSE}
+#### Gender  
+#More men submitted loan applications than women.  Men have a slightly higher loan approval status than women but not by much. #A small portion of the applications do not list gender.  
+
+gender_loan_status_count <- table(loan_raw$Gender,loan_raw$Loan_Status)
+gender_loan_status_perct <- gender_loan_status_count
+gender_loan_status_perct[1,] <- round(gender_loan_status_perct[1,]/13 * 100, 2)
+gender_loan_status_perct[2,] <- round(gender_loan_status_perct[2,]/112 * 100, 2)
+gender_loan_status_perct[3,] <- round(gender_loan_status_perct[3,]/489 * 100, 2)
+
+#set column names for gender_loan_status_count
+gender_loan_status_count <- data.frame(gender_loan_status_count)
+colnames(gender_loan_status_count) <- c('Gender','Loan_Status','Count')
+
+#set column names and row names for gender_loan_status_perct
+rownames(gender_loan_status_perct) <-  c("Blank","Female", "Male")
+colnames(gender_loan_status_perct) <-  c("% Applications Not Approved", "% Applications Approved")
+
+loan_data_Gender <- loan_raw
+loan_data_Gender[loan_data_Gender$Gender == '',] <- "Blank"
+
+t1 <- loan_data_Gender %>% group_by(Gender) %>% tally 
+colnames(t1) <- c("Gender","Count Loan Applications")
+t2 <- gender_loan_status_perct
+
+knitr::kable(list(t1, t2))
+```
+
+```{r gender-histogram,include = FALSE}
+ggplot(data=gender_loan_status_count, aes(x=Gender, y=Count, fill=Loan_Status)) + geom_bar(stat="identity",position="dodge")
+```
+
+#### Married
+
+Married applicants have a higher approval rate than non married applicants. It will be useful to look into if this has any correlation with income.
+
+```{r married-tables,fig.width=7,fig.height=3}
+married_loan_status_count <- table(loan_raw$Married,loan_raw$Loan_Status)
+married_loan_status_perct <- married_loan_status_count
+married_loan_status_perct[1,] <- round(married_loan_status_perct[1,]/3 * 100, 2)
+married_loan_status_perct[2,] <- round(married_loan_status_perct[2,]/213 * 100, 2)
+married_loan_status_perct[3,] <- round(married_loan_status_perct[3,]/398 * 100, 2)
+
+#set column names for married_loan_status_count
+married_loan_status_count <- data.frame(married_loan_status_count)
+colnames(married_loan_status_count) <- c('Married','Loan_Status','Count')
+
+#set column names and row names for gender_loan_status_perct
+rownames(married_loan_status_perct) <-  c("Blank", "Not Married", "Married")
+colnames(married_loan_status_perct) <-  c("% Applications Not Approved", "% Applications Approved")
+
+loan_data_Married <- loan_raw
+loan_data_Married[loan_data_Married$Married == '',] <- "Blank"
+
+t1 <- loan_data_Married %>% group_by(Married) %>% tally 
+colnames(t1) <- c("Married","Count Loan Applications")
+t2 <- married_loan_status_perct
+
+knitr::kable(list(t1, t2)) 
+
+```
+
+```{r married-histogram,fig.width=7,fig.height=3}
+ggplot(data=married_loan_status_count, aes(x=Married, y=Count, fill=Loan_Status)) + geom_bar(stat="identity",position="dodge")
+```
+
+#### Dependents
+
+Applicants with 2 dependents appear to have the highest loan approval rate. It'd be interesting to see if the income per dependent has any impact on loan approval if we assume having more income makes it more likely to get a loan approved.
+
+```{r dep-tables,fig.width=7,fig.height=3}
+dep_loan_status_count <- table(loan_raw$Dependents,loan_raw$Loan_Status)
+dep_loan_status_perct <- dep_loan_status_count
+dep_loan_status_perct[1,] <- round(dep_loan_status_perct[1,]/15 * 100, 2)
+dep_loan_status_perct[2,] <- round(dep_loan_status_perct[2,]/345 * 100, 2)
+dep_loan_status_perct[3,] <- round(dep_loan_status_perct[3,]/102 * 100, 2)
+dep_loan_status_perct[4,] <- round(dep_loan_status_perct[4,]/101 * 100, 2)
+dep_loan_status_perct[5,] <- round(dep_loan_status_perct[5,]/51 * 100, 2)
+
+#set column names for dep_loan_status_count
+dep_loan_status_count <- data.frame(dep_loan_status_count)
+colnames(dep_loan_status_count) <- c('Dependents','Loan_Status','Count')
+
+#set column names and row names for gender_loan_status_perct
+rownames(dep_loan_status_perct) <-  c("Blank", "0", "1","2","3+")
+colnames(dep_loan_status_perct) <-  c("% Applications Not Approved", "% Applications Approved")
+
+loan_data_Dep <- loan_raw
+loan_data_Dep[loan_data_Dep$Dependents == '',] <- "Blank"
+
+t1 <- loan_data_Dep %>% group_by(Dependents) %>% tally 
+colnames(t1) <- c("Dependents","Count Loan Applications")
+t2 <- dep_loan_status_perct
+
+knitr::kable(list(t1, t2))
+```
+
+```{r dep-histogram,fig.width=7,fig.height=3}
+ggplot(data=dep_loan_status_count, aes(x=Dependents, y=Count, fill=Loan_Status)) + geom_bar(stat="identity",position="dodge")
+```
+
+#### Education
+
+Applicants with Graduate education have a higher loan approval rate here.
+
+```{r edu-tables,fig.width=7,fig.height=3}
+edu_loan_status_count <- table(loan_raw$Education,loan_raw$Loan_Status)
+edu_loan_status_perct <- edu_loan_status_count
+edu_loan_status_perct[1,] <- round(edu_loan_status_perct[1,]/480 * 100, 2)
+edu_loan_status_perct[2,] <- round(edu_loan_status_perct[2,]/134 * 100, 2)
+
+#set column names for edu_loan_status_count
+edu_loan_status_count <- data.frame(edu_loan_status_count)
+colnames(edu_loan_status_count) <- c('Education','Loan_Status','Count')
+
+#set column names for edu_loan_status_perct
+colnames(edu_loan_status_perct) <-  c("% Applications Not Approved", "% Applications Approved")
+
+t1 <- loan_raw %>% group_by(Education) %>% tally 
+colnames(t1) <- c("Education","Count Loan Applications")
+t2 <- edu_loan_status_perct
+
+knitr::kable(list(t1, t2))
+```
+
+```{r edu-histogram,fig.width=7,fig.height=3}
+ggplot(data=edu_loan_status_count, aes(x=Education, y=Count, fill=Loan_Status)) + geom_bar(stat="identity",position="dodge")
+```
+
+```{r selfemp-tables,include=FALSE}
+#### Self Employed    
+#The loan approval rate is almost identical here for self employed versus not self employed.  
+
+selfemp_loan_status_count <- table(loan_raw$Self_Employed,loan_raw$Loan_Status)
+selfemp_loan_status_perct <- selfemp_loan_status_count
+selfemp_loan_status_perct[1,] <- round(selfemp_loan_status_perct[1,]/32  * 100, 2)
+selfemp_loan_status_perct[2,] <- round(selfemp_loan_status_perct[2,]/500  * 100, 2)
+selfemp_loan_status_perct[3,] <- round(selfemp_loan_status_perct[3,]/82  * 100, 2)
+
+#set column names for selfemp_loan_status_count
+selfemp_loan_status_count <- data.frame(selfemp_loan_status_count)
+colnames(selfemp_loan_status_count) <- c('Self_Employed','Loan_Status','Count')
+
+#set column names and row names for selfemp_loan_status_perct
+rownames(selfemp_loan_status_perct) <-  c("Blank", "No", "Yes")
+colnames(selfemp_loan_status_perct) <-  c("% Applications Not Approved", "% Applications Approved")
+
+loan_data_selfemp<- loan_raw
+loan_data_selfemp[loan_data_selfemp$Self_Employed == '',] <- "Blank"
+t1 <- loan_data_selfemp %>% group_by(Self_Employed) %>% tally 
+colnames(t1) <- c("Self_Employed","Count Loan Applications")
+t2 <- selfemp_loan_status_perct
+
+knitr::kable(list(t1, t2))
+```
+
+```{r self-employed-histogram,include=FALSE}
+ggplot(data=selfemp_loan_status_count, aes(x=Self_Employed, y=Count, fill=Loan_Status)) + geom_bar(stat="identity",position="dodge")
+```
+
+#### Property Area
+
+Semiurban applicants have the highest approval loan rating over rural and urban.
+
+```{r proparea-tables,fig.width=7,fig.height=3}
+proparea_loan_status_count <- table(loan_raw$Property_Area,loan_raw$Loan_Status)
+proparea_loan_status_perct <- proparea_loan_status_count
+proparea_loan_status_perct[1,] <- round(proparea_loan_status_perct[1,]/179  * 100, 2)
+proparea_loan_status_perct[2,] <- round(proparea_loan_status_perct[2,]/233  * 100, 2)
+proparea_loan_status_perct[3,] <- round(proparea_loan_status_perct[3,]/202  * 100, 2)
+
+#set column names for proparea_loan_status_count
+proparea_loan_status_count <- data.frame(proparea_loan_status_count)
+colnames(proparea_loan_status_count) <- c('Property_Area','Loan_Status','Count')
+
+#set column names for proparea_loan_status_perct
+colnames(proparea_loan_status_perct) <-  c("% Applications Not Approved", "% Applications Approved")
+
+t1 <- loan_raw %>% group_by(Property_Area) %>% tally 
+colnames(t1) <- c("Property_Area","Count Loan Applications")
+t2 <- proparea_loan_status_perct
+
+knitr::kable(list(t1, t2))
+```
+
+```{r property-area-histogram,fig.width=7,fig.height=3}
+ggplot(data=proparea_loan_status_count, aes(x=Property_Area, y=Count, fill=Loan_Status)) + geom_bar(stat="identity",position="dodge")
+```
+
+#### Credit History
+
+Having an a credit history that meets the guidelines appears to be extremely important in whether the loan status is approved or not.
+
+```{r credit-history-tables,fig.width=7,fig.height=3}
+credhist_loan_status_count <- table(loan_raw$Credit_History,loan_raw$Loan_Status)
+credhist_loan_status_perct <- credhist_loan_status_count
+credhist_loan_status_perct[1,] <- round(credhist_loan_status_perct[1,]/89  * 100, 2)
+credhist_loan_status_perct[2,] <- round(credhist_loan_status_perct[2,]/475  * 100, 2)
+
+#set column names for credhist_loan_status_count
+credhist_loan_status_count <- data.frame(credhist_loan_status_count)
+colnames(credhist_loan_status_count) <- c('Credit_History','Loan_Status','Count')
+
+#set column names for credhist_loan_status_perct
+colnames(credhist_loan_status_perct) <-  c("% Applications Not Approved", "% Applications Approved")
+
+t1 <- loan_raw %>% group_by(Credit_History) %>% tally 
+colnames(t1) <- c("Credit_History","Count Loan Applications")
+t2 <- credhist_loan_status_perct
+
+knitr::kable(list(t1, t2))
+```
+
+```{r credit_history-histogram,fig.width=7,fig.height=3}
+ggplot(data=credhist_loan_status_count, aes(x=Credit_History, y=Count, fill=Loan_Status)) + geom_bar(stat="identity",position="dodge")
+```
+
+### **Numerical Variables**
+
+-   **ApplicantIncome:** how much money does the applicant make?\
+-   **CoapplicantIncome:** how much money does the coapplicant make? if there is no coapplicant this is 0.\
+-   **LoanAmount:** how much is the loan worth in thousands?\
+-   **Loan\_Amount\_Term:** how many months is the loan?
+
+Now let's use the **pairs.panels** function to see a lot of important information related to our numeric data:
+
+-   **Applicant income** and **loan\_amount** are strongly correlated\
+-   The most common **Loan\_Amount\_Term** is 360 months
+
+```{r summary}
+numeric_loan_data <- dplyr::select(loan_data,ApplicantIncome,CoapplicantIncome,LoanAmount,Loan_Amount_Term)
+pairs.panels(numeric_loan_data, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = TRUE # show correlation ellipses
+             )
+```
+
+#### Inspecting ApplicantIncome and Loan Income
+
+Here we can see that the **ApplicantIncome** does not have a huge effect on whether the Loan\_Status was approved (Y) or not. The average ApplicantIncome is about the same for both groups is similar. There are a fewer more outliers of high incomes in the group where the loan status was approved.
+
+```{r plot-income, warning = FALSE,fig.width=7,fig.height=6}
+approved <- loan_data[loan_data$Loan_Status == 'Y',]
+denied <- loan_data[loan_data$Loan_Status == 'N',]
+
+a <- ggplot(loan_data,aes(x=ApplicantIncome,color=Loan_Status))  + geom_boxplot()
+b <- ggplot(approved,aes(x=ApplicantIncome,y=LoanAmount,color=Loan_Status)) + geom_point(color='blue') + xlab('Approved Applicant Income') + scale_x_continuous(limits = c(0, 25000)) + scale_y_continuous(limits = c(0, 650))
+grid.arrange(a,b,nrow=2)#,nrow=2,ncol=2,layout_matrix=c(1,1,2,3)) 
+```
+
+```{r plot-income-1,warning = FALSE,fig.width=7,fig.height=3}
+c <- ggplot(denied,aes(x=ApplicantIncome,y=LoanAmount,color=Loan_Status)) + geom_point(color='red') + xlab('Denied Applicant Income') + scale_x_continuous(limits = c(0, 25000)) + scale_y_continuous(limits = c(0, 650))
+
+grid.arrange(c)
+
+```
+
+In addition, upon investigating the sum of **ApplicantIncome** and **CoapplicantIncome**, we observe that it does not appear to have much prediction power with **Loan\_Status**.
+
+```{r plot-income-combined,warning = FALSE,fig.width=7,fig.height=3}
+ggplot(data = loan_data, aes(x = Loan_Status, y = ApplicantIncome+CoapplicantIncome, fill=Loan_Status)) +
+  geom_boxplot() +
+  coord_flip()
+```
+
+#### LoanAmount Per ApplicantIncome
+
+Now let's see if the rate of the **LoanAmount** divided by **ApplicantIncome** has any prediction power when trying to deteremine if a Loan\_Status will be approved or not. This would indicate that perhaps someone who is requesting a LoanAmount 5 times their income, they might not be approved but if they requested 3 times their income they could get approved.
+
+Looking at the boxplots below, the average LoanAmtPerSalary is roughly the same for approved and not approved applications so this disbunks this theory. This variable might prove helpful in our modeling so we will keep it.
+
+```{r plot-loan-per-income,fig.width=7,fig.height=3,warnings=FALSE}
+loan_data$LoanAmtPerSalary <- loan_data$LoanAmount*100000/loan_data$ApplicantIncome
+ggplot(loan_data,aes(x=LoanAmtPerSalary,color=Loan_Status)) + geom_boxplot() + scale_x_continuous(limits = c(0, 30000))
+
+
+```
+
+## Data Prep for Model-fitting
+
+I explicitly recoded the Y/N values into 1/0's
+
+```{r data-prep, include=FALSE}
+loan_knn <- loan_data
+loan_knn$Loan_Status <- as.numeric(loan_knn$Loan_Status)-1 
+str(loan_knn)
+```
+
+Since credit history is a categorical value and fewer than 50 rows are missing it's better to delete these data points rather than to try to interpret a value for them. For loan amount term and loan amount we will use the **mice** package to impute a value where it is missing.
+
+## Additional Data Processing / Manipulation Steps
+
+So, first off, I need to convert Credit\_History to factors so that the mice model that I'm going to use can detect that column as a categorical variable.
+
+Combining ApplicantIncome and CoapplicantIncome into a new variable TotalIncome, and dropping the respective input columns. Loan\_ID doesn't help with the prediction obviously. So dropping it as well.
+
+```{r addl-data-process}
+
+loan_knn_pre_imp <- loan_knn
+loan_knn_pre_imp$Credit_History <- as.factor(loan_knn_pre_imp$Credit_History)
+
+loan_knn_pre_imp <- loan_knn_pre_imp %>% mutate(TotalIncome = ApplicantIncome + CoapplicantIncome)
+loan_knn_pre_imp <- loan_knn_pre_imp %>% dplyr::select(-c('Loan_ID','ApplicantIncome','CoapplicantIncome'))
+
+# loan_knn_pre_imp[loan_knn_pre_imp$Dependents = "3+"] <- "3"
+
+# recode dependents 3+ to 3
+loan_knn_pre_imp$Dependents <- revalue(loan_knn_pre_imp$Dependents, c("3+"="3"))
+
+
+str(loan_knn_pre_imp)
+```
+
+### Status quo of missing data
+
+```{r missing-counts,include=TRUE}
+
+clean_loan_data <- loan_data
+
+vis_dat(clean_loan_data)
+```
+
+I've set up a predictorMatrix where I can instruct mice to use which method for which column for imputation.
+
+Set seed = 501. Retrieved the results.
+
+```{r impute-missing-numeric-data,class.source = 'fold-show',warnings=FALSE}
+
+# clean_loan_data <- complete(mice(clean_loan_data,m=5,meth='pmm',print=FALSE))
+init <- mice(loan_knn_pre_imp, maxit=0) 
+meth <- init$method
+predM <- init$predictorMatrix
+meth[c('LoanAmount','Loan_Amount_Term')] <- 'norm'
+meth[c('Credit_History','Self_Employed','Gender','Married')] <- 'logreg'
+meth[c('Dependents')] <- 'polyreg'
+meth[c('Loan_Status','TotalIncome','Property_Area','Education')] = ''
+loan_knn_imp1 <- mice(loan_knn_pre_imp, method=meth, predictorMatrix=predM, seed=501)
+
+```
+
+### Manual Examinations
+
+After some manual examinations of the different imputed results, I've decided to go with imputed column \#3.
+
+```{r manual-exams}
+# Manual examination 
+#Credit_History
+loan_knn_imp1$imp$Credit_History
+loan_knn[96:118,]
+
+#Married
+loan_knn_imp1$imp$Married
+loan_knn[430:436,]
+
+#Dependents
+loan_knn_imp1$imp$Dependents
+loan_knn[227:229,]
+
+```
+
+### Decision
+
+We picked impute \#3.
+
+```{r decision}
+loan_knn2 <- complete(loan_knn_imp1, 3) # 2nd argument if not provided is defaulted to 1
+```
+
+```{r clean_loan_data}
+clean_loan_data <- loan_knn2
+
+# have to redo loan_status as loan_knn's loan status had been recoded to numeric on purpose
+clean_loan_data$Loan_Status <- as.factor(clean_loan_data$Loan_Status)
+str(clean_loan_data)
+```
+
+## Imbalanced Dataset
+
+Notice that the response variable is 31/69 split on the binary response, No and Yes, respectively.
+
+```{r imbalanced-data}
+imb_dat <- as.data.frame(prop.table(x = table(clean_loan_data$Loan_Status)))
+colnames(imb_dat) <- c("Loan Status", "Freq")
+imb_dat
+
+```
+
+### Splitting Data into Training & Testing
+
+Here we are going to use 80% of our data to train the model and reserve 20% to test the model we pick.
+
+```{r train-test}
+set.seed(1042)
+sample_size <- floor(nrow(clean_loan_data)*0.8)
+indices <- sample(1:nrow(clean_loan_data),sample_size)
+train <- clean_loan_data[c(indices),]
+test <- clean_loan_data[-c(indices),]
+```
+
+## 2. Linear Discriminant Analysis
+
+LDA does not seem to be a good approach with this data set as the points provided by the available data are not linearly separable
+
+```{r}
+train%>%
+  ggplot(aes(x = log(LoanAmount), y= log(TotalIncome), color = Loan_Status)) + geom_point()
+```
+
+### lda Cross Validation
+
+predictions with the LDA model are less accurate than if we just used the binary classifier Credit\_History to determine weather or not a loan would be approved
+
+```{r trainCtrl}
+# cross validation 
+ctrl <- trainControl(method = 'repeatedcv', repeats = 11)
+```
+
+### lda model results
+
+```{r}
+lda.fit <- train(Loan_Status ~ TotalIncome + LoanAmount,
+             data = train,
+             method = 'lda',
+             trControl = ctrl
+             )
+test$lda <- predict(lda.fit, test)
+confusionMatrix(test$lda, test$Loan_Status)
+```
+
+## 3. K-nearest Neighbor
+
+First off, set seed = 688.
+
+Create training/test partitions by calling createDataPartition. p is set to .8 to mean 80/20 split for train/test set.
+
+Checking the structure of the train set (*knn\_train*)
+
+```{r knn_train, include=FALSE}
+set.seed(688)
+# recoding Loan_Status back to categorical variable
+loan_knn2$Loan_Status <- as.factor(loan_knn2$Loan_Status)
+str(loan_knn2)
+
+
+# Data Partitioning
+trainIndex <- createDataPartition(loan_knn2$Loan_Status, p = .8, list = FALSE, times = 1)
+knn_train <- loan_knn2[trainIndex,]
+knn_test  <- loan_knn2[-trainIndex,]
+
+
+
+str(knn_train)
+```
+
+Checking the structure of the test set (*knn\_test*)
+
+```{r knn_test}
+str(knn_test)
+```
+
+### Cross Validation
+
+Perform a repeated 11-fold cross-validation, meaning the number of complete sets of folks to compute is 11. For this classification problem, we assigned our fitted model to *knn.fit.* The cross-validated results is plugged in the form of *trControl.*
+
+```{r knn_fit}
+
+# cleaning up some parallel computing
+# https://stackoverflow.com/questions/25097729/un-register-a-doparallel-cluster
+registerDoSEQ()
+
+trControl <- trainControl(method  = "repeatedcv",
+                          repeats  = 11)
+knn.fit <- train(Loan_Status ~ .,
+             method     = "knn",
+             tuneGrid   = expand.grid(k = 1:10),
+             trControl  = trControl,
+             preProcess = c("center","scale"),
+             data       = knn_train
+             )
+
+knn.fit 
+```
+
+#### Key Information on the value of K
+
+Since our target variable is a binary factor of 2, by default, we use Accuracy as the determining performance metric. The optimal K is thus determined by Accuracy. **K = 9 was finally selected.** \# of neighbors is 9.
+
+```{r plot knn.fit}
+plot(knn.fit)
+```
+
+### Model Results
+
+```{r knn-confusion-mat}
+
+knn_pred <- predict(knn.fit, newdata = knn_test)
+# options('max.print' = 100)  
+# getOption("max.print")
+confusionMatrix(knn_pred, knn_test$Loan_Status)
+
+```
+
+Accuracy is 78.69% while balanced accuracy is only 67.95%.
+
+## 4. Decision Trees
+
+Now we will use a decision tree to see how well it will perform on our data.\
+\* Our decision tree starts by splitting users based on their Credit\_History. This makes sense based on our exploratory data analysis.\
+\* Other variables used in the decision tree include LoanAmount, PropertyArea, etc.
+
+```{r decision-tree,fig.width=6,fig.height=6}
+loan_tree = tree(Loan_Status ~., train)
+plot(loan_tree)
+text(loan_tree)
+title(main = "Unpruned Decision Tree")
+```
+
+### Decision Tree Performance
+
+#### Training Data
+
+Now we will use our model to see how it performs on the training data. We see that the model predicted **Loan\_Status** with an accuracy of \~83%. 81 instances were incorrectly classified.
+
+```{r tree-test}
+pred_tree_train <- predict(loan_tree,train,type="class")
+test_table <- table(pred_tree_train,train$Loan_Status) %>% kbl() %>% kable_styling()
+test_table
+mean(pred_tree_train == train$Loan_Status)
+```
+
+### Cross-validation for better performance
+
+The first version of our model was a full, unpruned tree. Now we are going to prune it back to get the optimal tree using cross validation. We have plotted the number of misclassifications with the different trees. As we can see, the trees with size 2-4 have the fewest misclassifications. We will choose size 4 to have the fewest misclassifications.
+
+```{r cv-trees}
+set.seed(2311)
+cv_trees = cv.tree(loan_tree,FUN = prune.misclass)
+cv_trees
+plot(cv_trees)
+```
+
+Using a size = 4, our decision tree looks like the following:
+
+```{r pruned-tree,figure.height=8}
+loan_tree_pruned = prune.misclass(loan_tree,best=4)
+plot(loan_tree_pruned)
+text(loan_tree_pruned)
+```
+
+### Testing Data
+
+Now let's see how our pruned performs on our testing data. The accuracy for our test data was \~82%, which was almost the same as our training data. 21 of the total observations were misclassified.
+
+```{r confusion-matrix}
+pred_tree_test  <- predict(loan_tree_pruned,test, type="class")
+test_table <- table(pred_tree_test,test$Loan_Status) %>% kbl() %>% kable_styling()
+test_table
+mean(pred_tree_test == test$Loan_Status)
+
+confusionMatrix(pred_tree_test, test$Loan_Status)
+```
+
+## 5. Random Forests
+
+Now we will develop a random forest model to see how well it will performs with our data. Parameters for a random forest include: **mtry** : Number of variables randomly sampled as candidates at each split. Note that the default values are different for classification (sqrt(p) where p is number of variables in x) and regression (p/3) **ntree** : Number of trees to grow. This should not be set to too small a number, to ensure that every input row gets predicted at least a few times
+
+Our initial model will have default parameters of mtry=sqrt(13) and ntree=500.
+
+```{r rf-start-step1}
+# find out no of cores 
+no_cores <- detectCores() - 1
+
+cl<-makePSOCKcluster(no_cores)
+  
+registerDoParallel(cl)
+  
+# start.time<-proc.time()
+  
+# model<-train(target~., data=trainingset, method='rf')
+```
+
+```{r rf-default-step2}
+#drop loan id
+train_rf1 <- train
+test_rf1 <- test 
+
+# Create model with default parameters
+control <- trainControl(method="repeatedcv", number=10, repeats=3)
+mtry <- sqrt(ncol(train_rf1))
+tunegrid <- expand.grid(.mtry=mtry)
+rf_default <- train(Loan_Status~., data=train_rf1, method="rf", metric="Accuracy", tuneGrid=tunegrid, trControl=control)
+print(rf_default)
+
+# stop.time<-proc.time()
+# 
+# run.time<-stop.time -start.time
+# 
+# print(run.time)
+#   
+# stopCluster(cl)
+```
+
+Our inital model has accuracy of about 80%. Let's see if we can improve accuracy by finding an optimal mtry value. We will test different mtry values 1-10 by using gridsearch. We see from our results that the optimal mtry value for accuracy is 2.
+
+```{r rf-mtry}
+control <- trainControl(method="repeatedcv", number=10, repeats=3, search="grid")
+set.seed(123)
+tunegrid <- expand.grid(.mtry=c(1:10))
+rf_gridsearch <- train(Loan_Status~., data=train_rf1, method="rf", metric="Accuracy", tuneGrid=tunegrid, trControl=control)
+print(rf_gridsearch)
+plot(rf_gridsearch)
+```
+
+Next let's find the optimal value for ntree. Again we'll use gridsearch to test different ntree values. It's evident from our results that optimal ntree value for accuracy is 1500.
+
+```{r rf-ntree}
+control <- trainControl(method="repeatedcv", number=10, repeats=3, search="grid")
+tunegrid <- expand.grid(.mtry=2)
+modellist <- list()
+for (ntree in c(500, 1000, 1500, 2000, 2500)) {
+  set.seed(124)
+	fit <- train(Loan_Status~., data=train_rf1, method="rf", metric="Accuracy", tuneGrid=tunegrid, trControl=control, ntree=ntree)
+	key <- toString(ntree)
+	modellist[[key]] <- fit
+}
+# compare results
+results <- resamples(modellist)
+summary(results)
+dotplot(results)
+```
+
+Our final random forest model will have mtry=2 and ntree=1500.
+
+```{r rf-final}
+rf_final <- randomForest(Loan_Status ~ ., 
+                        data = train_rf1, 
+                        ntree = 1500, 
+                        mtry = 2,
+                        importance = TRUE,
+                        proximity = TRUE)
+
+print(rf_final)
+#variable importance
+round(importance(rf_final), 2)
+
+prediction <-predict(rf_final, test_rf1)
+confusionMatrix(prediction, test_rf1$Loan_Status)
+
+# stop.time<-proc.time()
+
+# run.time<-stop.time -start.time
+
+# print(run.time)
+
+# Stopping Cluster
+stopCluster(cl)
+```
+
+Accuracy of our final random forest model is about 83% on the test data with 19 instances misclassified. 2 are false negatives and 17 are false positives. Credit\_history is the most important feature.
+
+## 6. Model Performance
+
+|       Metric      |   LDA  | K-Nearest Neighbor (KNN) | Decision Trees | Random Forest |
+|:-----------------:|:------:|:------------------------:|:--------------:|:-------------:|
+|      Accuracy     | 0.7317 |          0.7869          |     0.8293     |     0.8374    |
+| Balanced Accuracy | 0.5000 |          0.6795          |     0.7010     |     0.7066    |
+|    Sensitivity    |    0   |          0.3947          |     0.4242     |     0.4242    |
+
+: Model Performance Matrix
+
+Notice that the sensitivity between Decision Trees, and RF is the same at 42.42%. It's surprising to see that LDA and Random Forest ended up having the highest accuracy, which is usually the go-to metric to go for in an unbalanced dataset with the binary response that are not 50/50. The model we picked is Random Forest.
+
+### Resources:
+
+-   <https://www.r-bloggers.com/2015/10/imputing-missing-data-with-r-mice-package/>\
+-   <https://daviddalpiaz.github.io/r4sl/trees.html>
+-   <https://www.youtube.com/watch?v=YPz2J5lHeVM>
+-   <https://machinelearningmastery.com/tune-machine-learning-algorithms-in-r/>
