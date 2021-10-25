@@ -1,8 +1,8 @@
 ---
 title: "Homework3"
-author: "Devin Teran, Dennis Pong, Richard Zheng, Katie Evers"
-date: "10/4/2021"
-output: github_document
+output:
+md_document:
+allow_html_dependencies: true
 ---
 
 ```{r setup, include=FALSE}
@@ -755,9 +755,4 @@ Accuracy of our final random forest model is about 83% on the test data with 19 
 
 Notice that the sensitivity between Decision Trees, and RF is the same at 42.42%. It's surprising to see that LDA and Random Forest ended up having the highest accuracy, which is usually the go-to metric to go for in an unbalanced dataset with the binary response that are not 50/50. The model we picked is Random Forest.
 
-### Resources:
 
--   <https://www.r-bloggers.com/2015/10/imputing-missing-data-with-r-mice-package/>\
--   <https://daviddalpiaz.github.io/r4sl/trees.html>
--   <https://www.youtube.com/watch?v=YPz2J5lHeVM>
--   <https://machinelearningmastery.com/tune-machine-learning-algorithms-in-r/>
