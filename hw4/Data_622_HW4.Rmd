@@ -82,7 +82,7 @@ I employed a couple strategies into transforming the data before we can apply mo
 ```{r}
 
 aggr_plot <- aggr(adhd_data, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, labels=names(data), cex.axis=.7, gap=3, ylab=c("Histogram of missing data","Pattern"))
-
+# look for ways to rename the column count
 ```
 
 Removing Initial as it provides no values to any models. Also, I removed Psych.meds. as it has 67% missing.
@@ -159,6 +159,7 @@ meth[c('Age','Sex','Race','ADHD.Q1','ADHD.Q2','ADHD.Q3','ADHD.Q4','ADHD.Q5','ADH
 ```{r parlmice}
 
 # abandoned this method as it's not always consistent
+# cl<-makePSOCKcluster(no_cores)
 # registerDoParallel(cl)
 #   
 # start.time<-proc.time()
@@ -182,7 +183,7 @@ Examining the imputations for Education. As the 50-th percentile before was 12, 
 # str(adhd_data_imp1)
 # skim(adhd_data_imp1) %>% dplyr::filter( n_missing > 0 )
 # 
-# #Eduation
+#Eduation
 # adhd_data_imp1$imp$Education
 # adhd_data_pre_imp1[140:142,]
 # 
@@ -231,18 +232,17 @@ Ended up dropping 29 records as even there are other means of imputing the missi
 # saved 3 records
 # adhd_data_3 <- adhd_data_2[complete.cases(adhd_data_2[ , -49]),]
 
-# saving a R data frame
-# save(df, file = "adhd_data_3.RData")
+
 
 
 ```
 
 ```{r load.adhd_data_3}
-# loading RData
-# load('adhd_data_3.RData')
 
 
+# Saving the records 
 # saveRDS(adhd_data_3, "adhd_data_3.rds")
+#Loading the records
 adhd_data_3 <- readRDS("adhd_data_3.rds")
 ```
 
