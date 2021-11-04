@@ -202,7 +202,7 @@ Examining the imputations for Education. As the 50-th percentile before was 12, 
 # skim(adhd_data_2) %>% dplyr::filter( n_missing > 0 )
 # # # saving a R data frame
 
-# saveRDS(adhd_data_2, "adhd_data_3.rds")
+# saveRDS(adhd_data_2, "adhd_data_2.rds")
 
 
 ```
