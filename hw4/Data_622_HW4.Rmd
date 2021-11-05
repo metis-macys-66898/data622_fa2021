@@ -47,11 +47,13 @@ library(tidymodels)
 library(e1071)
 library(vcd)
 
-
+library(ggplot2)
+library(Hmisc)
+library(Boruta)
 ## Global options
 # ---------------------------------
 
-options(max.print="100")
+options(max.print="108")
 opts_knit$set(width=31)
 ```
 
@@ -331,11 +333,100 @@ mosaic(~ Abuse + Suicide, data = adhd_data_3)
 
 ## Support Vector Machine (SVM)
 
+SVM will help us decide on optimal decision boundary which can then help classify our labeled data. We're going to model for the response variable suicide attempts with the adhd\_data\_3 dataset with both a radial and a linear kernel to try to find the decision boundary as we don't know whether this is a non-linear problem or linear problem.
+
 ```{r svm}
+dim(adhd_data_3)
+# skim(adhd_data_3) 
+adhd_data_4 <- adhd_data_3[complete.cases(adhd_data_3),]
+dim(adhd_data_4)
+```
 
+```{r}
 
+adhd_data_4_matx = as.matrix(adhd_data_4)
+
+df.corr.p = as.data.frame(rcorr(adhd_data_4_matx)$P)
+
+# removing Suicide, and repeated columns
+correlation_table <- cbind(rownames(df.corr.p), df.corr.p[, 49])[-c(49,51,52) , ]
+correlation_table %>%
+  kbl(caption = "Correlation with Suicide") %>%
+  kable_material_dark()
+```
+
+Here are the factors that has at least a 30% correlation with Suicide:
+
+-   Age
+
+-   ADHD.Q6
+
+-   ADHD.Q9
+
+-   ADHD.Q11
+
+-   ADHD.Q12
+
+-   ADHD.Q13
+
+-   ADHD.Q17
+
+-   ADHD.Q18
+
+-   MD.Q1c
+
+-   MD.Q1e
+
+-   MD.Q1m
+
+-   THC
+
+-   Stimulants
+
+-   Disorderly.Conduct
+
+-   NonSubstDx
+
+We further pear down the list of factors to that of correlation coefficient .500 or above.
+
+```{r ge.5}
+svm_selected <- as.data.frame(cbind(rownames(df.corr.p[df.corr.p[, 49] >= .5,]), df.corr.p[df.corr.p[, 49]>= .5, 49 ]))
+svm_selected <-  svm_selected[complete.cases(svm_selected), ] 
+rownames(svm_selected) <- seq(length=nrow(svm_selected))
+svm_selected
+
+adhd <- adhd_data_4 %>% select(c(svm_selected$V1, 'Suicide' )) %>% select(-c(Non.subst.Dx))
+```
+
+```{r radial }
+set.seed(45)
+indexes = createDataPartition(adhd$Suicide, p = .85, list = F) # results not in a List
+train = adhd[indexes, ]
+test = adhd[-indexes, ]
+ 
+wts <- 100 / table(test$Suicide)
+wts
+
+radial_svm = svm(Suicide~., data=train, class.weights = wts, C = 13)
+print(radial_svm)
+ 
+test$pred = predict(radial_svm, test)
+ 
+confusionMatrix(test$pred, test$Suicide)
 
 ```
+
+```{r linear}
+linear_svm = svm(factor(Suicide)~., data=train, kernel = "linear", type = 'C-classification', cost = 10, scale = F, class.weights = wts)
+print(linear_svm)
+ 
+test$pred = predict(linear_svm, test)
+ 
+confusionMatrix(test$pred, test$Suicide)
+
+```
+
+Linear SVM performs better with a higher Balanced Accuracy.
 
 ------------------------------------------------------------------------
 
