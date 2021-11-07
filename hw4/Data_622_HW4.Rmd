@@ -84,7 +84,8 @@ I employed a couple strategies into transforming the data before we can apply mo
 ```{r}
 
 aggr_plot <- aggr(adhd_data, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, labels=names(data), cex.axis=.7, gap=3, ylab=c("Histogram of missing data","Pattern"))
-# look for ways to rename the column count
+
+
 ```
 
 Removing Initial as it provides no values to any models. Also, I removed Psych.meds. as it has 67% missing.
@@ -324,23 +325,142 @@ mosaic(~ Abuse + Suicide, data = adhd_data_3)
 
 ## Xtreme Gradient Boosting (XGBoost)
 
+Removing the lone record that Suicide is NA.
+
 ```{r xgboost}
 # need to remove Suicide null 
-
-
-
-```
-
-## Support Vector Machine (SVM)
-
-SVM will help us decide on optimal decision boundary which can then help classify our labeled data. We're going to model for the response variable suicide attempts with the adhd\_data\_3 dataset with both a radial and a linear kernel to try to find the decision boundary as we don't know whether this is a non-linear problem or linear problem.
-
-```{r svm}
 dim(adhd_data_3)
 # skim(adhd_data_3) 
 adhd_data_4 <- adhd_data_3[complete.cases(adhd_data_3),]
 dim(adhd_data_4)
+# Dropping the 2 repeated columns
+adhd_data_4 <- adhd_data_4[, -c(51:52)]
 ```
+
+Splitting the train and test dataset
+
+```{r train-test}
+set.seed(108)
+sample_size <- floor(nrow(adhd_data_4)*0.8)
+indices <- sample(1:nrow(adhd_data_4),sample_size)
+data_train <- adhd_data_4[c(indices),]
+data_test <- adhd_data_4[-c(indices),]
+```
+
+One-hot encoding of features, which is a requirement for XGBoost. At the end, you wanted to make sure the number of columns in data\_train and data\_test are the same.
+
+```{r 1-hot}
+# do the 1-hot encoding for the data_train
+Suicide <- data_train[, 49]
+dummy <- dummyVars(" ~ . ", data = data_train [, -49] )
+newdata <- data.frame(predict (dummy, newdata = data_train[, -49]))
+data_train <- cbind (newdata, Suicide)
+options(max.print="309")
+colnames(data_train)
+
+# repeat the same exercise for the data_test
+Suicide1 <- data_test[, 49]
+dummy1 <- dummyVars(" ~ . ", data = data_test [, -49] )
+newdata1 <- data.frame(predict (dummy1, newdata = data_test[, -49]))
+data_test <- cbind (newdata1, Suicide1)
+colnames(data_test)
+
+
+str(data_train)
+```
+
+As you can tell below, the target variable in the data\_train is unbalanced and is skewed toward 0 (68% 0s).
+
+```{r}
+table(data_train$Suicide)
+```
+
+```{r upsample}
+train_upsample <- upSample(x=data_train[, -295], y = data_train$Suicide)
+# There is a new variable created called Class so that's why I can drop the Suicide column
+table(train_upsample$Class)
+
+```
+
+Preparing the grid for XGBoost
+
+```{r grid_tune}
+grid_tune <- expand.grid(
+  nrounds = c(81), # of trees normal range is 1500 - 3000 depends on # of records
+  max_depth = c(2, 4, 6), 
+  eta = c(0.01, 0.1, 0.3), # Learning rate
+  gamma = 0,   # pruning normal range [0, 1]
+  colsample_bytree = 1, # subsample ratio for columns for tree
+  min_child_weight = 1, # the larger the more conservative the model is, can be used as a stop
+  subsample = 1 # used to prevent overfitting by sampling x% training dataset
+)
+
+
+```
+
+The following defines the trainControl and actually train the XGBoost
+
+```{r train}
+trainControl <- trainControl (method = "cv", 
+                              number = 3, 
+                              verboseIter = T, 
+                              allowParallel = T
+                             )
+
+xgb_tune <- train(x = train_upsample[, -295], 
+                  y = train_upsample$Class,
+                  trControl = trainControl, 
+                  tuneGrid = grid_tune, 
+                  method = "xgbTree", 
+                  verbose = T
+                  )
+
+# Best tune
+xgb_tune$bestTune
+
+# Creating the best model 
+train_Control <- trainControl (method = "none", 
+                              verboseIter = T, 
+                              allowParallel = T
+                             )
+
+final_grid <- expand.grid(nrounds = xgb_tune$bestTune$nrounds, 
+                          eta = xgb_tune$bestTune$eta,
+                          max_depth = xgb_tune$bestTune$max_depth,
+                          gamma = xgb_tune$bestTune$gamma,
+                          colsample_bytree = xgb_tune$bestTune$colsample_bytree,
+                          min_child_weight = xgb_tune$bestTune$min_child_weight,
+                          subsample = xgb_tune$bestTune$subsample
+)
+
+xgb_model <- train(x= train_upsample[, -295], 
+                   y = train_upsample$Class,
+                   trControl = train_Control, 
+                   tuneGrid = final_grid, 
+                   method = "xgbTree", 
+                   verbose = F
+)                  
+
+
+# Creating prediction here
+xgb.pred <- predict(xgb_model, data_test)
+
+
+
+
+```
+
+After creating xgb.pred, we run the Confusion Matrix to get the performance metrics.
+
+```{r}
+confusionMatrix(xgb.pred, data_test$Suicide)
+```
+
+Accuracy is 79.31% while Balanced Accuracy is only 70.24%
+
+## Support Vector Machine (SVM)
+
+SVM will help us decide on optimal decision boundary which can then help classify our labeled data. We're going to model for the response variable suicide attempts with the adhd\_data\_3 dataset with both a radial and a linear kernel to try to find the decision boundary as we don't know whether this is a non-linear problem or linear problem.
 
 ```{r}
 
@@ -349,7 +469,7 @@ adhd_data_4_matx = as.matrix(adhd_data_4)
 df.corr.p = as.data.frame(rcorr(adhd_data_4_matx)$P)
 
 # removing Suicide, and repeated columns
-correlation_table <- cbind(rownames(df.corr.p), df.corr.p[, 49])[-c(49,51,52) , ]
+correlation_table <- cbind(rownames(df.corr.p), df.corr.p[, 49])[-c(49) , ]
 correlation_table %>%
   kbl(caption = "Correlation with Suicide") %>%
   kable_material_dark()
@@ -395,7 +515,7 @@ svm_selected <-  svm_selected[complete.cases(svm_selected), ]
 rownames(svm_selected) <- seq(length=nrow(svm_selected))
 svm_selected
 
-adhd <- adhd_data_4 %>% select(c(svm_selected$V1, 'Suicide' )) %>% select(-c(Non.subst.Dx))
+adhd <- adhd_data_4 %>% select(c(svm_selected$V1, 'Suicide' )) 
 ```
 
 ```{r radial }
