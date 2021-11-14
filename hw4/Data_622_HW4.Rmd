@@ -306,13 +306,51 @@ mosaic(~ Abuse + Suicide, data = adhd_data_3)
 ```
 
 ## Clustering Method
-
-```{r Clustering}
-
-
-
-
+Here we are going to start our clustering techniques using hierarchical clustering.  The benefits of this clustering type is that we don't need to specify the number of clusters and results are reproducable.
+  
+Instead of using all the columns from our data, we decided to only use the column *ADHD.Total* an *MD.Total* to the represent the individual columns combined together.  This will help our results to be easier to interpret.  
+  
+The output from hierarchical clustering is a dendogram, which is a graph that looks like a tree.  We can see from our dendogram below there are 4 distinct clusters.     
+```{r Clustering-more-data}
+hier_cluster_subset <- adhd_data_3 %>% select(c('Age','Sex','Race','ADHD.Total','MD.TOTAL','Alcohol','THC','Cocaine','Stimulants','Sedative.hypnotics','Opioids','Court.order','Education','Hx.of.Violence','Disorderly.Conduct','Suicide','Abuse','Non.subst.Dx','Subst.Dx','NonSubstDx','SubstDx'))
+hier_cluster_complete <- hclust(dist(hier_cluster_subset),method="complete")
+plot(hier_cluster_complete, hang = -1, cex = 0.6)
+abline(h = 43.5, col = "red")
 ```
+From the above dendogram, we can see there are 4 distinct clusters so we will cut our tree at this level using the function **cutree()**.
+This function returns a vector of cluster assignments, which can be see here:  
+```{r Clustering-simple-cut-tree}
+vect_cut <- cutree(hier_cluster_complete,4)
+hier_cluster_subset$cluster_pred <- vect_cut
+vect_cut
+```
+The above clustering included quite a few columns.  Now we are going to make a simpler clustering dendogram using only *age*,*ADHD.Total*,*MD.TOTAL*.  These columns represent our numeric data.  
+```{r Clustering-simple}
+hier_cluster_subset_simple <- adhd_data_3 %>% select(c('Age','ADHD.Total','MD.TOTAL'))
+hier_cluster_complete_simple <- hclust(dist(hier_cluster_subset_simple),method="complete")
+plot(hier_cluster_complete_simple, hang = -1, cex = 0.6)
+abline(h = 50, col = "red")
+```
+Based on the above dendogram, we can see there are 3 distinct clusters.  Again, we will cut our tree and view the output cluster assignments.  
+```{r Clustering-cut-tree}
+num_cut = cutree(hier_cluster_complete_simple,3)
+hier_cluster_subset_simple$cluster_pred <- num_cut
+num_cut
+```
+Here we can see that it appears that cluster 2 had a median and average age of 38.  This cluster's age fits right between cluster 1 & 3.  Cluster 2 had the highest individual scores for reporting ADHD and reporting mood disorder.  It would be interesting to see if there is any data to investigate if this age has any correlation with a mid-life crisis.  Younger participants self reported the lower amount of ADHD and mood disorder.  
+```{r }
+results_simple <- hier_cluster_subset_simple %>% dplyr::group_by(cluster_pred) 
+results_simple$Age <- as.numeric(as.character(results_simple$Age))
+results_simple$ADHD.Total <- as.numeric(as.character(results_simple$ADHD.Total))
+results_simple$MD.TOTAL <- as.numeric(as.character(results_simple$MD.TOTAL))
+results_simple %>% dplyr::summarize(Avg_Age = mean(Age,na.rm=TRUE),
+                                    Median_Age = median(Age,na.rm=TRUE),
+                                    Avg_ADHD.Total = mean(ADHD.Total,na.rm=TRUE),
+                                    Median_ADHD.Total = median(ADHD.Total,na.rm=TRUE),
+                                    Avg_MD.TOTAL = mean(MD.TOTAL,na.rm=TRUE),
+                                    Median_MD.TOTAL = median(MD.TOTAL,na.rm=TRUE))
+```
+
 
 ## Principal Component Analysis
 
