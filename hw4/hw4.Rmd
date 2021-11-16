@@ -1,0 +1,489 @@
+---
+title: 'Data 622 Homework 4: Mental Health Data Modeling'
+author: 'Group 4: Dennis Pong, Katie Evers, Richard Zheng, Devin Teran'
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    highlight: pygments
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 2
+    toc_float: no
+    fontsize: 12
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+    number_sections: yes
+    df_print: kable
+    highlight: tango
+  rmdformats::readthedown:
+    highlight: kate
+    code_folding: hide
+editor_options:
+  chunk_output_type: inline
+fontsize: 11pt
+urlcolor: blue
+---
+
+```{r setup, cache=FALSE}
+library(knitr)
+library(tidyverse)
+library(caret) # For createDataPartition, featureplot, classification report
+library(skimr)    # Used for EDA
+#library(corrplot) # For correlation matrix
+library(mice) # Multivariate Imputation By Chained Equations
+library(parallel)
+library(doParallel)
+#library(plyr)
+library(ggplot2)
+library(kableExtra)
+library(stats)
+library(e1071)
+library(vcd)
+library(ggplot2)
+library(Hmisc)
+
+## Global options
+# ---------------------------------
+options(max.print="108")
+opts_knit$set(width=31)
+```
+
+# **Loading data**
+
+```{r load.adhd_data_3}
+# Saving the records 
+# saveRDS(adhd_data_3, "adhd_data_3.rds")
+#Loading the records
+adhd_data_3 <- readRDS("adhd_data_3.rds")
+```
+
+#### Count for each Education / suicide attempt
+
+```{r "Education~Suicide"}
+ggplot(adhd_data_3, aes(x = Education, fill = Suicide)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange", "purple", "cyan4"),
+                    guide = F) +
+  theme_minimal() +
+  facet_wrap(~Suicide, ncol = 1) +
+  coord_flip()
+mosaic(~ Education + Suicide, data = adhd_data_3)
+```
+
+#### Count for each Subst.Dx / suicide attempt
+
+```{r "Subst.Dx~Suicide"}
+ggplot(adhd_data_3, aes(x = Subst.Dx, fill = Suicide)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange", "purple", "cyan4"),
+                    guide = F) +
+  theme_minimal() +
+  facet_wrap(~Suicide, ncol = 1) +
+  coord_flip()
+mosaic(~ Subst.Dx + Suicide, data = adhd_data_3)
+```
+
+#### Count for each Non.subst.Dx / suicide attempt
+
+```{r "Non.subst.Dx~Suicide"}
+ggplot(adhd_data_3, aes(x = Non.subst.Dx, fill = Suicide)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange", "purple", "cyan4"),
+                    guide = F) +
+  theme_minimal() +
+  facet_wrap(~Suicide, ncol = 1) +
+  coord_flip()
+mosaic(~ Non.subst.Dx + Suicide, data = adhd_data_3)
+```
+
+#### Count for each Abuse / Suicide
+
+```{r "Abuse~Suicide"}
+ggplot(adhd_data_3, aes(x = Abuse, fill = Suicide)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange", "purple", "cyan4", "black"),
+                    guide = F) +
+  theme_minimal() +
+  facet_wrap(~Suicide, ncol = 1) +
+  coord_flip()
+mosaic(~ Abuse + Suicide, data = adhd_data_3)
+```
+
+## Clustering Method
+
+Here we are going to start our clustering techniques using hierarchical clustering.  The benefits of this clustering type is that we don't need to specify the number of clusters and results are reproducable.
+  
+Instead of using all the columns from our data, we decided to only use the column *ADHD.Total* an *MD.Total* to the represent the individual columns combined together.  This will help our results to be easier to interpret.  
+  
+The output from hierarchical clustering is a dendogram, which is a graph that looks like a tree.  We can see from our dendogram below there are 4 distinct clusters.     
+```{r Clustering-more-data}
+hier_cluster_subset <- adhd_data_3 %>% select(c('Age','Sex','Race','ADHD.Total','MD.TOTAL','Alcohol','THC','Cocaine','Stimulants','Sedative.hypnotics','Opioids','Court.order','Education','Hx.of.Violence','Disorderly.Conduct','Suicide','Abuse','Non.subst.Dx','Subst.Dx','NonSubstDx','SubstDx'))
+hier_cluster_complete <- hclust(dist(hier_cluster_subset),method="complete")
+plot(hier_cluster_complete, hang = -1, cex = 0.6)
+abline(h = 43.5, col = "red")
+```
+From the above dendogram, we can see there are 4 distinct clusters so we will cut our tree at this level using the function **cutree()**.
+This function returns a vector of cluster assignments, which can be see here:  
+```{r Clustering-simple-cut-tree}
+vect_cut <- cutree(hier_cluster_complete,4)
+hier_cluster_subset$cluster_pred <- vect_cut
+vect_cut
+```
+The above clustering included quite a few columns.  Now we are going to make a simpler clustering dendogram using only *age*,*ADHD.Total*,*MD.TOTAL*.  These columns represent our numeric data.  
+```{r Clustering-simple}
+hier_cluster_subset_simple <- adhd_data_3 %>% select(c('Age','ADHD.Total','MD.TOTAL'))
+hier_cluster_complete_simple <- hclust(dist(hier_cluster_subset_simple),method="complete")
+plot(hier_cluster_complete_simple, hang = -1, cex = 0.6)
+abline(h = 50, col = "red")
+```
+Based on the above dendogram, we can see there are 3 distinct clusters.  Again, we will cut our tree and view the output cluster assignments.  
+```{r Clustering-cut-tree}
+num_cut = cutree(hier_cluster_complete_simple,3)
+hier_cluster_subset_simple$cluster_pred <- num_cut
+num_cut
+```
+Here we can see that it appears that cluster 2 had a median and average age of 38.  This cluster's age fits right between cluster 1 & 3.  Cluster 2 had the highest individual scores for reporting ADHD and reporting mood disorder.  It would be interesting to see if there is any data to investigate if this age has any correlation with a mid-life crisis.  Younger participants self reported the lower amount of ADHD and mood disorder.  
+```{r }
+results_simple <- hier_cluster_subset_simple %>% dplyr::group_by(cluster_pred) 
+results_simple$Age <- as.numeric(as.character(results_simple$Age))
+results_simple$ADHD.Total <- as.numeric(as.character(results_simple$ADHD.Total))
+results_simple$MD.TOTAL <- as.numeric(as.character(results_simple$MD.TOTAL))
+results_simple %>% dplyr::summarize(Avg_Age = mean(Age,na.rm=TRUE),
+                                    Median_Age = median(Age,na.rm=TRUE),
+                                    Avg_ADHD.Total = mean(ADHD.Total,na.rm=TRUE),
+                                    Median_ADHD.Total = median(ADHD.Total,na.rm=TRUE),
+                                    Avg_MD.TOTAL = mean(MD.TOTAL,na.rm=TRUE),
+                                    Median_MD.TOTAL = median(MD.TOTAL,na.rm=TRUE))
+```
+
+
+## Principal Component Analysis
+
+
+```{r}
+# function that returns principal components up to the threshold variance 
+
+rank.pca = function(data,threshold){
+  rank = 1
+  cum_var = 0
+  while (cum_var <= threshold){
+    pca = prcomp(data, rank. = rank)
+    cum_var = summary(pca)$importance[rank*3]
+    rank = rank + 1
+  }
+  return(pca)
+}
+```
+
+
+```{r}
+data = adhd_data_3
+
+# arbitrary threshold of .85
+
+pca.thresh = .85
+
+# change types back to int so we can use prcomp()
+
+for (name in names(data)){
+  data[name] = c(sapply(data[name], as.integer))
+}
+
+```
+
+### PCA for ADHD Questions
+
+```{r}
+is.adhd_question = str_detect(names(data), '^ADHD\\.Q')
+adhd_questions = data[is.adhd_question]
+
+adhd.pca = rank.pca(adhd_questions,pca.thresh)
+summary(adhd.pca)
+adhd.pca
+```
+
+We were able to use PCA to reduce the results from 18 ADHD questions to 9 principal components while keeping 85% of the variance. For the first principal component (the component that explains the variance the most) we see that each question holds roughly the same amount of weight. The first component has a positive relationship with all 18 questions
+
+
+### PCA for Mood Disorder Questions
+
+```{r}
+is.mood_disorder = str_detect(names(data), '^MD\\.Q')
+mood_disorder = data[is.mood_disorder]
+
+md.pca = rank.pca(mood_disorder, pca.thresh)
+md.pca%>%
+  summary()
+md.pca
+
+```
+
+Similar to the PCA done to ADHD questions, we were able to reduce the 15 questions to 9 principal components. For the first component we see that MD.Q3 is weighted less than the other questions which leads us to believe that it is less important than the other questions. However, all of these questions seem to have a negative relationship with the first component. The second component is more varied, but question MD.Q3 is still the least weighted; which adds to the suspicion that it is less important than the others.
+
+### PCA for Drug Use
+
+```{r}
+drug_use = data[c("Alcohol", "THC", "Cocaine", "Stimulants", "Sedative.hypnotics", "Opioids")]
+drug_use = drug_use %>%
+  drop_na()
+
+drug.pca = rank.pca(drug_use, pca.thresh)
+drug.pca%>%
+  summary()
+drug.pca
+```
+
+We were able to reduce the 6 drug questions to 4 principal components. The first component (that explains 34% of the variance) gives significant weight to Cocaine, Alcohol and THC (in order of highest - lowest). The other drugs are not as significant. However, in the second component, that explains 28% of the variance, still gives Alcohol a high weighting but has a negative value for Cocaine and THC. In PC3 (22%) THC has high weighting but everything else has low or negative weights. This shows that the importance of variables can vary heavily in this set of questions
+
+
+### PCA on entire dataset
+
+```{r}
+pca.all = rank.pca(data[names(data)!= 'Suicide'],pca.thresh)
+pca.all%>%
+  summary()
+pca.all
+```
+While we did not have much success reducing the groups of questions with PCA, we were able to reduce the entire dataset (53 components) to just two components while still explaining at least 85% of the variance
+ 
+## Xtreme Gradient Boosting (XGBoost)
+
+Removing the lone record that Suicide is NA.
+
+```{r xgboost}
+# need to remove Suicide null 
+dim(adhd_data_3)
+# skim(adhd_data_3) 
+adhd_data_4 <- adhd_data_3[complete.cases(adhd_data_3),]
+dim(adhd_data_4)
+# Dropping the 2 repeated columns
+adhd_data_4 <- adhd_data_4[, -c(51:52)]
+```
+
+Splitting the train and test dataset
+
+```{r train-test}
+set.seed(108)
+sample_size <- floor(nrow(adhd_data_4)*0.8)
+indices <- sample(1:nrow(adhd_data_4),sample_size)
+data_train <- adhd_data_4[c(indices),]
+data_test <- adhd_data_4[-c(indices),]
+```
+
+One-hot encoding of features, which is a requirement for XGBoost. At the end, you wanted to make sure the number of columns in data\_train and data\_test are the same.
+
+```{r 1-hot}
+# do the 1-hot encoding for the data_train
+Suicide <- data_train[, 49]
+dummy <- dummyVars(" ~ . ", data = data_train [, -49] )
+newdata <- data.frame(predict (dummy, newdata = data_train[, -49]))
+data_train <- cbind (newdata, Suicide)
+options(max.print="309")
+colnames(data_train)
+# repeat the same exercise for the data_test
+Suicide1 <- data_test[, 49]
+dummy1 <- dummyVars(" ~ . ", data = data_test [, -49] )
+newdata1 <- data.frame(predict (dummy1, newdata = data_test[, -49]))
+data_test <- cbind (newdata1, Suicide1)
+colnames(data_test)
+str(data_train)
+```
+
+As you can tell below, the target variable in the data\_train is unbalanced and is skewed toward 0 (68% 0s).
+
+```{r}
+table(data_train$Suicide)
+```
+
+```{r upsample}
+train_upsample <- upSample(x=data_train[, -295], y = data_train$Suicide)
+# There is a new variable created called Class so that's why I can drop the Suicide column
+table(train_upsample$Class)
+```
+
+Preparing the grid for XGBoost
+
+```{r grid_tune}
+grid_tune <- expand.grid(
+  nrounds = c(81), # of trees normal range is 1500 - 3000 depends on # of records
+  max_depth = c(2, 4, 6), 
+  eta = c(0.01, 0.1, 0.3), # Learning rate
+  gamma = 0,   # pruning normal range [0, 1]
+  colsample_bytree = 1, # subsample ratio for columns for tree
+  min_child_weight = 1, # the larger the more conservative the model is, can be used as a stop
+  subsample = 1 # used to prevent overfitting by sampling x% training dataset
+)
+```
+
+The following defines the trainControl and actually train the XGBoost
+
+```{r train}
+trainControl <- trainControl (method = "cv", 
+                              number = 3, 
+                              verboseIter = T, 
+                              allowParallel = T
+                             )
+xgb_tune <- train(x = train_upsample[, -295], 
+                  y = train_upsample$Class,
+                  trControl = trainControl, 
+                  tuneGrid = grid_tune, 
+                  method = "xgbTree", 
+                  verbose = T
+                  )
+# Best tune
+xgb_tune$bestTune
+# Creating the best model 
+train_Control <- trainControl (method = "none", 
+                              verboseIter = T, 
+                              allowParallel = T
+                             )
+final_grid <- expand.grid(nrounds = xgb_tune$bestTune$nrounds, 
+                          eta = xgb_tune$bestTune$eta,
+                          max_depth = xgb_tune$bestTune$max_depth,
+                          gamma = xgb_tune$bestTune$gamma,
+                          colsample_bytree = xgb_tune$bestTune$colsample_bytree,
+                          min_child_weight = xgb_tune$bestTune$min_child_weight,
+                          subsample = xgb_tune$bestTune$subsample
+)
+xgb_model <- train(x= train_upsample[, -295], 
+                   y = train_upsample$Class,
+                   trControl = train_Control, 
+                   tuneGrid = final_grid, 
+                   method = "xgbTree", 
+                   verbose = F
+)                  
+# Creating prediction here
+xgb.pred <- predict(xgb_model, data_test)
+```
+
+After creating xgb.pred, we run the Confusion Matrix to get the performance metrics.
+
+```{r}
+confusionMatrix(xgb.pred, data_test$Suicide)
+```
+
+Accuracy is 79.31% while Balanced Accuracy is only 70.24%
+
+## Support Vector Machine (SVM)
+
+SVM will help us decide on optimal decision boundary which can then help classify our labeled data. We're going to model for the response variable suicide attempts with the adhd\_data\_3 dataset with both a radial and a linear kernel to try to find the decision boundary as we don't know whether this is a non-linear problem or linear problem.
+
+```{r}
+adhd_data_4_matx = as.matrix(adhd_data_4)
+df.corr.p = as.data.frame(rcorr(adhd_data_4_matx)$P)
+# removing Suicide, and repeated columns
+correlation_table <- cbind(rownames(df.corr.p), df.corr.p[, 49])[-c(49) , ]
+correlation_table %>%
+  kbl(caption = "Correlation with Suicide") %>%
+  kable_material_dark()
+```
+
+Here are the factors that has at least a 30% correlation with Suicide:
+
+-   Age
+
+-   ADHD.Q6
+
+-   ADHD.Q9
+
+-   ADHD.Q11
+
+-   ADHD.Q12
+
+-   ADHD.Q13
+
+-   ADHD.Q17
+
+-   ADHD.Q18
+
+-   MD.Q1c
+
+-   MD.Q1e
+
+-   MD.Q1m
+
+-   THC
+
+-   Stimulants
+
+-   Disorderly.Conduct
+
+-   NonSubstDx
+
+We further pear down the list of factors to that of correlation coefficient .500 or above.
+
+```{r ge.5}
+svm_selected <- as.data.frame(cbind(rownames(df.corr.p[df.corr.p[, 49] >= .5,]), df.corr.p[df.corr.p[, 49]>= .5, 49 ]))
+svm_selected <-  svm_selected[complete.cases(svm_selected), ] 
+rownames(svm_selected) <- seq(length=nrow(svm_selected))
+svm_selected
+adhd <- adhd_data_4 %>% select(c(svm_selected$V1, 'Suicide' )) 
+```
+
+```{r radial }
+set.seed(45)
+indexes = createDataPartition(adhd$Suicide, p = .85, list = F) # results not in a List
+train = adhd[indexes, ]
+test = adhd[-indexes, ]
+ 
+wts <- 100 / table(test$Suicide)
+wts
+radial_svm = svm(Suicide~., data=train, class.weights = wts, C = 13)
+print(radial_svm)
+ 
+test$pred = predict(radial_svm, test)
+ 
+confusionMatrix(test$pred, test$Suicide)
+```
+
+```{r linear}
+linear_svm = svm(factor(Suicide)~., data=train, kernel = "linear", type = 'C-classification', cost = 10, scale = F, class.weights = wts)
+print(linear_svm)
+ 
+test$pred = predict(linear_svm, test)
+ 
+confusionMatrix(test$pred, test$Suicide)
+```
+
+Linear SVM performs better with a higher Balanced Accuracy.
+
+------------------------------------------------------------------------
+
+```{r}
+# set.seed(688)
+# # recoding Loan_Status back to categorical variable
+# loan_knn2$Loan_Status <- as.factor(loan_knn2$Loan_Status)
+# str(loan_knn2)
+# 
+# 
+# # Data Partitioning
+# trainIndex <- createDataPartition(loan_knn2$Loan_Status, p = .8, list = FALSE, times = 1)
+# knn_train <- loan_knn2[trainIndex,]
+# knn_test  <- loan_knn2[-trainIndex,]
+# 
+# 
+# 
+# str(knn_train)
+```
+
+```{r}
+# trControl <- trainControl(method  = "repeatedcv",
+#                           repeats  = 11)
+# knn.fit <- train(Loan_Status ~ .,
+#              method     = "knn",
+#              tuneGrid   = expand.grid(k = 1:10),
+#              trControl  = trControl,
+#              preProcess = c("center","scale"),
+#              data       = knn_train
+#              )
+```
+
+```{r}
+# knn_pred <- predict(knn.fit, newdata = knn_test)
+# # options('max.print' = 100)  
+# # getOption("max.print")
+# confusionMatrix(knn_pred, knn_test$Loan_Status)
+```
