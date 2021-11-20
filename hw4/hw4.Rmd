@@ -612,7 +612,7 @@ ggpairs(adhd_data_31, columns = c(4,5,16,21), aes(colour = Suicide, alpha = 0.4)
 From the plots above, particularly the box plots, it is evident that MD.TOTAL and SubstDx separate our target variable pretty well. However, note that there is some overlap between the target variable classes. We will use these two variables in our final model.
 
 ```{r linear2}
-set.seed(688)
+set.seed(443)
 adhd_data_3_model <- subset(adhd_data_3, select=c(SubstDx, MD.TOTAL, Suicide))
 indexes = createDataPartition(adhd_data_3_model$Suicide, p = .85, list = F) # results not in a List
 train = adhd_data_3_model[indexes, ]
@@ -626,7 +626,7 @@ test$pred = predict(linear_svm_final, test)
 confusionMatrix(test$pred, test$Suicide)
 ```
 
-From the confusion matrix results, we can see that 6 cases were misclassified. Accuracy is 71.43% and balanced accuracy is 75.00%.
+From the confusion matrix results, we can see that 6 cases were misclassified. Accuracy is 76.19% and balanced accuracy is 78.33%.
 
 ------------------------------------------------------------------------
 
