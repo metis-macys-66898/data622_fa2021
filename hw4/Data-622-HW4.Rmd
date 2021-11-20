@@ -1,0 +1,371 @@
+---
+title: 'Data 622 Homework 4: Mental Health Data Modeling'
+author: 'Group 4: Dennis Pong, Katie Evers, Richard Zheng, Devin Teran'
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    code_folding: hide
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+    number_sections: yes
+    df_print: kable
+    highlight: tango
+  html_document:
+    df_print: paged
+    highlight: pygments
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 2
+    toc_float: no
+    fontsize: 12
+editor_options:
+  chunk_output_type: inline
+fontsize: 11pt
+urlcolor: blue
+---
+
+```{r setup, cache=FALSE}
+
+library(knitr)
+library(tidyverse)
+library(caret) # For createDataPartition, featureplot, classification report
+library(skimr)    # Used for EDA
+#library(corrplot) # For correlation matrix
+library(mice) # Multivariate Imputation By Chained Equations
+library(micemd)
+library(parallel)
+library(doParallel)
+#library(plyr)
+library(VIM)
+library(ggplot2)
+library(kableExtra)
+library(stats)
+library(tidymodels)
+library(e1071)
+library(vcd)
+
+
+## Global options
+# ---------------------------------
+
+options(max.print="100")
+opts_knit$set(width=31)
+```
+
+# **Loading data**
+
+```{r loading-data}
+# getwd()
+setwd("~/Data 622/repos/data622_fa2021/hw4")
+adhd_data <- readxl::read_excel('ADHD_data.xlsx', sheet = "Data", .name_repair = "universal", na = "")
+
+# dim(adhd_data)
+str(adhd_data)
+
+# loan_raw <- read.csv('https://raw.githubusercontent.com/metis-macys-66898/data622_fa2021/main/hw3/data/Loan_approval.csv', header = TRUE, na.strings = " ")
+# loan_raw[loan_raw==""] <- NA
+# loan_raw <- loan_raw %>% mutate_if(is.character, factor)
+# loan <- loan_raw
+```
+
+## Data Processing Steps
+
+I employed a couple strategies into transforming the data before we can apply models.
+
+-   Imputing only when necessary. Imputing by applying the right method for the right variable type.
+
+-   Make sure to make the fields into factors when they are categorical variables.
+
+```{r}
+
+aggr_plot <- aggr(adhd_data, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, labels=names(data), cex.axis=.7, gap=3, ylab=c("Histogram of missing data","Pattern"))
+
+```
+
+Removing Initial as it provides no values to any models. Also, I removed Psych.meds. as it has 67% missing.
+
+```{r}
+
+adhd_data_pre_imp <- adhd_data %>% select(-c('Initial','Psych.meds.'))
+skim(adhd_data_pre_imp) %>% dplyr::filter( n_missing > 0 ) 
+
+```
+
+```{r}
+adhd_data_pre_imp <- adhd_data_pre_imp %>% mutate(NonSubstDx =  as.factor(Non.subst.Dx)  ,
+                                                  SubstDx = as.factor(Subst.Dx) ,
+                                                  Abuse = factor(Abuse, ordered = TRUE), 
+                                                  Alcohol = as.factor(Alcohol)
+)
+
+
+adhd_data_pre_imp <- adhd_data_pre_imp %>%  mutate_if(is.numeric, factor)
+skim(adhd_data_pre_imp)
+adhd_data_pre_imp1 <- adhd_data_pre_imp %>% mutate(Education = as.numeric(Education)  )
+skim(adhd_data_pre_imp1)
+# skim(adhd_data_pre_imp)
+```
+
+### Imputation
+
+More specifically, I separated the variables with missing values into the following categories:
+
+-   **Categorical Variables with more than 2 levels:** Subst.Dx, NonSubstDx, Opioids, Sedative.hypnotics, Stimulants, Cocaine, THC, Alcohol - polyreg
+
+-   **Categorical Variables with 2 levels:** Disorderly.Conduct, Hx.of.Violence, Court.order - logreg
+
+-   **Discrete variable (ordered) with more than 2 levels:** Abuse - polr
+
+-   **Continuous Variables:** Education **- ~~pmm~~ -\> norm**
+
+```{r mice.par}
+
+init <- mice(adhd_data_pre_imp1, maxit=0) 
+meth <- init$method
+predM <- init$predictorMatrix
+meth[c('Education')] <- 'pmm'
+meth[c('Disorderly.Conduct', 'Hx.of.Violence', 'Court.order')] <- 'logreg'
+meth[c('Subst.Dx', 'NonSubstDx' , 'Opioids', 'Sedative.hypnotics', 'Stimulants', 'Cocaine', 'THC', 'Alcohol')] <- 'polyreg'
+meth[c('Abuse')] = 'polr'
+meth[c('Age','Sex','Race','ADHD.Q1','ADHD.Q2','ADHD.Q3','ADHD.Q4','ADHD.Q5','ADHD.Q6','ADHD.Q7','ADHD.Q8','ADHD.Q9','ADHD.Q10','ADHD.Q11','ADHD.Q12','ADHD.Q13','ADHD.Q14','ADHD.Q15','ADHD.Q16','ADHD.Q17','ADHD.Q18','ADHD.Total','MD.Q1a','MD.Q1b','MD.Q1c','MD.Q1d','MD.Q1e','MD.Q1f','MD.Q1g','MD.Q1h','MD.Q1i','MD.Q1j','MD.Q1k','MD.Q1L','MD.Q1m','MD.Q2','MD.Q3','MD.TOTAL','Suicide')] = ''
+
+# adhd_data_imp1 <- mice(adhd_data_pre_imp1, method=meth, predictorMatrix=predM, seed=501)
+# adhd_data_imp1 <- parlmice(adhd_data_pre_imp1, method=meth, predictorMatrix=predM, cluster.seed=501, m = 4, n.core = 4, n.imp.core = 100)
+no_cores <- detectCores() - 1
+
+cl<-makePSOCKcluster(no_cores)
+
+registerDoParallel(cl)
+
+start.time<-proc.time()
+
+adhd_data_imp1 <- mice.par(adhd_data_pre_imp1, method=meth, predictorMatrix=predM, seed=301, m = 5)
+
+stop.time<-proc.time()
+
+run.time<-stop.time -start.time
+
+print(run.time)
+
+stopCluster(cl)
+# user  system elapsed 
+#   1.826   4.303 264.775 
+```
+
+```{r parlmice}
+
+# abandoned this method as it's not always consistent
+# registerDoParallel(cl)
+#   
+# start.time<-proc.time()
+#   
+# adhd_data_imp1 <- parlmice(adhd_data_pre_imp1, method=meth, predictorMatrix=predM, cluster.seed=501, m = 4, n.core = 4, n.imp.core = 1)
+# 
+# stop.time<-proc.time()
+# 
+# run.time<-stop.time -start.time
+# 
+# print(run.time)
+# 
+# stopCluster(cl)
+```
+
+#### Examining the imputations
+
+Examining the imputations for Education. As the 50-th percentile before was 12, we picked an impute that is exactly that. Impute \#4 fits the bill.
+
+```{r}
+str(adhd_data_imp1)
+skim(adhd_data_imp1) %>% dplyr::filter( n_missing > 0 ) 
+
+#Eduation
+adhd_data_imp1$imp$Education
+adhd_data_pre_imp1[140:142,]
+
+
+#Age
+adhd_data_imp1$imp$Alcohol
+
+```
+
+```{r decision}
+adhd_data_2 <- complete(adhd_data_imp1, 4) # 2nd argument if not provided is defaulted to 1
+```
+
+```{r adhd_data_2}
+
+skim(adhd_data_2) %>% dplyr::filter( n_missing > 0 ) 
+# saving a R data frame
+save(df, file = "adhd_data_2.RData")
+```
+
+Ended up dropping 29 records as even there are other means of imputing the missing records manually. I just don't think it's trustworthy when advanced algorithms did not end up imputing them. The need to have complete cases, except for the suicide variable for section of clustering and PCA where suicide variable is not the response variable, or variable of interest, is the ultimate reason why I had to drop any records with even a missing field from the dataset.
+
+```{r load.RData}
+# loading RData
+load('adhd_data_2.RData')
+
+adhd_data_imp1$imp$Suicide
+# 41	NA	NA	NA	NA	NA
+# 49	NA	NA	NA	NA	NA
+# 53	NA	NA	NA	NA	NA
+# 67	NA	NA	NA	NA	NA
+# 73	NA	NA	NA	NA	NA
+# 106	NA	NA	NA	NA	NA
+# 117	NA	NA	NA	NA	NA
+# 122	NA	NA	NA	NA	NA
+# 129	NA	NA	NA	NA	NA
+# 131
+
+
+# adhd_data_pre_imp1[complete.cases(adhd_data_pre_imp1[ , -49]),]
+
+# saved 3 records
+adhd_data_3 <- adhd_data_2[complete.cases(adhd_data_2[ , -49]),]
+
+# saving a R data frame
+save(df, file = "adhd_data_3.RData")
+
+
+```
+
+```{r load.adhd_data_3}
+# loading RData
+load('adhd_data_3.RData')
+
+```
+
+#### Count for each Education / suicide attempt
+
+```{r "Education~Suicide"}
+
+ggplot(adhd_data_3, aes(x = Education, fill = Suicide)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange", "purple", "cyan4"),
+                    guide = F) +
+  theme_minimal() +
+  facet_wrap(~Suicide, ncol = 1) +
+  coord_flip()
+mosaic(~ Education + Suicide, data = adhd_data_3)
+```
+
+#### Count for each Subst.Dx / suicide attempt
+
+```{r "Subst.Dx~Suicide"}
+
+ggplot(adhd_data_3, aes(x = Subst.Dx, fill = Suicide)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange", "purple", "cyan4"),
+                    guide = F) +
+  theme_minimal() +
+  facet_wrap(~Suicide, ncol = 1) +
+  coord_flip()
+mosaic(~ Subst.Dx + Suicide, data = adhd_data_3)
+```
+
+#### Count for each Non.subst.Dx / suicide attempt
+
+```{r "Non.subst.Dx~Suicide"}
+
+ggplot(adhd_data_3, aes(x = Non.subst.Dx, fill = Suicide)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange", "purple", "cyan4"),
+                    guide = F) +
+  theme_minimal() +
+  facet_wrap(~Suicide, ncol = 1) +
+  coord_flip()
+mosaic(~ Non.subst.Dx + Suicide, data = adhd_data_3)
+```
+
+#### Count for each Abuse / Suicide
+
+```{r "Abuse~Suicide"}
+
+ggplot(adhd_data_3, aes(x = Abuse, fill = Suicide)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange", "purple", "cyan4", "black"),
+                    guide = F) +
+  theme_minimal() +
+  facet_wrap(~Suicide, ncol = 1) +
+  coord_flip()
+mosaic(~ Abuse + Suicide, data = adhd_data_3)
+```
+
+## Clustering Method
+
+```{r Clustering}
+
+
+
+
+```
+
+## Principal Component Analysis
+
+```{r PCA}
+
+
+
+
+```
+
+## Xtreme Gradient Boosting (XGBoost)
+
+```{r xgboost}
+# need to remove Suicide null 
+
+
+
+```
+
+## Support Vector Machine (SVM)
+
+```{r svm}
+
+
+
+```
+
+------------------------------------------------------------------------
+
+```{r}
+# set.seed(688)
+# # recoding Loan_Status back to categorical variable
+# loan_knn2$Loan_Status <- as.factor(loan_knn2$Loan_Status)
+# str(loan_knn2)
+# 
+# 
+# # Data Partitioning
+# trainIndex <- createDataPartition(loan_knn2$Loan_Status, p = .8, list = FALSE, times = 1)
+# knn_train <- loan_knn2[trainIndex,]
+# knn_test  <- loan_knn2[-trainIndex,]
+# 
+# 
+# 
+# str(knn_train)
+```
+
+```{r}
+# trControl <- trainControl(method  = "repeatedcv",
+#                           repeats  = 11)
+# knn.fit <- train(Loan_Status ~ .,
+#              method     = "knn",
+#              tuneGrid   = expand.grid(k = 1:10),
+#              trControl  = trControl,
+#              preProcess = c("center","scale"),
+#              data       = knn_train
+#              )
+```
+
+```{r}
+
+# knn_pred <- predict(knn.fit, newdata = knn_test)
+# # options('max.print' = 100)  
+# # getOption("max.print")
+# confusionMatrix(knn_pred, knn_test$Loan_Status)
+
+
+```

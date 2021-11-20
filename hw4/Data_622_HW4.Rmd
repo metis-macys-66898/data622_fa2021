@@ -50,6 +50,7 @@ library(vcd)
 library(ggplot2)
 library(Hmisc)
 library(Boruta)
+library(GGally)
 ## Global options
 # ---------------------------------
 
@@ -109,7 +110,7 @@ adhd_data_pre_imp <- adhd_data_pre_imp %>%  mutate_if(is.numeric, factor)
 skim(adhd_data_pre_imp)
 adhd_data_pre_imp1 <- adhd_data_pre_imp %>% mutate(Education = as.numeric(Education)  )
 skim(adhd_data_pre_imp1)
-# skim(adhd_data_pre_imp)
+
 ```
 
 ### Imputation
@@ -124,6 +125,8 @@ More specifically, I separated the variables with missing values into the follow
 
 -   **Continuous Variables:** Education **- ~~pmm~~ -\> norm**
 
+[**Note that all the imputation codes below are intentionally commented out just because we relied on saved adhd\_data\_2.rds and adhd\_data\_3.rds files as the process of fully paralleled processed mice methods still would take significant amount of time to run (for the RMD knitting). It might take approx. 5 mins to the upwards of 17 mins.**]{.smallcaps}
+
 ```{r mice.par}
 
 init <- mice(adhd_data_pre_imp1, maxit=0) 
@@ -135,8 +138,6 @@ meth[c('Subst.Dx', 'NonSubstDx' , 'Opioids', 'Sedative.hypnotics', 'Stimulants',
 meth[c('Abuse')] = 'polr'
 meth[c('Age','Sex','Race','ADHD.Q1','ADHD.Q2','ADHD.Q3','ADHD.Q4','ADHD.Q5','ADHD.Q6','ADHD.Q7','ADHD.Q8','ADHD.Q9','ADHD.Q10','ADHD.Q11','ADHD.Q12','ADHD.Q13','ADHD.Q14','ADHD.Q15','ADHD.Q16','ADHD.Q17','ADHD.Q18','ADHD.Total','MD.Q1a','MD.Q1b','MD.Q1c','MD.Q1d','MD.Q1e','MD.Q1f','MD.Q1g','MD.Q1h','MD.Q1i','MD.Q1j','MD.Q1k','MD.Q1L','MD.Q1m','MD.Q2','MD.Q3','MD.TOTAL','Suicide')] = ''
 
-# adhd_data_imp1 <- mice(adhd_data_pre_imp1, method=meth, predictorMatrix=predM, seed=501)
-# adhd_data_imp1 <- parlmice(adhd_data_pre_imp1, method=meth, predictorMatrix=predM, cluster.seed=501, m = 4, n.core = 4, n.imp.core = 100)
 
 # no_cores <- detectCores() - 1
 # 
@@ -157,25 +158,6 @@ meth[c('Age','Sex','Race','ADHD.Q1','ADHD.Q2','ADHD.Q3','ADHD.Q4','ADHD.Q5','ADH
 # stopCluster(cl)
 # user  system elapsed 
 #   1.826   4.303 264.775 
-```
-
-```{r parlmice}
-
-# abandoned this method as it's not always consistent
-# cl<-makePSOCKcluster(no_cores)
-# registerDoParallel(cl)
-#   
-# start.time<-proc.time()
-#   
-# adhd_data_imp1 <- parlmice(adhd_data_pre_imp1, method=meth, predictorMatrix=predM, cluster.seed=501, m = 4, n.core = 4, n.imp.core = 1)
-# 
-# stop.time<-proc.time()
-# 
-# run.time<-stop.time -start.time
-# 
-# print(run.time)
-# 
-# stopCluster(cl)
 ```
 
 #### Examining the imputations
@@ -217,17 +199,6 @@ Ended up dropping 29 records as even there are other means of imputing the missi
 
 # adhd_data_2 <- readRDS("adhd_data_2.rds")
 
-# adhd_data_imp1$imp$Suicide
-# 41	NA	NA	NA	NA	NA
-# 49	NA	NA	NA	NA	NA
-# 53	NA	NA	NA	NA	NA
-# 67	NA	NA	NA	NA	NA
-# 73	NA	NA	NA	NA	NA
-# 106	NA	NA	NA	NA	NA
-# 117	NA	NA	NA	NA	NA
-# 122	NA	NA	NA	NA	NA
-# 129	NA	NA	NA	NA	NA
-# 131
 
 
 # adhd_data_pre_imp1[complete.cases(adhd_data_pre_imp1[ , -49]),]
@@ -306,38 +277,47 @@ mosaic(~ Abuse + Suicide, data = adhd_data_3)
 ```
 
 ## Clustering Method
-Here we are going to start our clustering techniques using hierarchical clustering.  The benefits of this clustering type is that we don't need to specify the number of clusters and results are reproducable.
-  
-Instead of using all the columns from our data, we decided to only use the column *ADHD.Total* an *MD.Total* to the represent the individual columns combined together.  This will help our results to be easier to interpret.  
-  
-The output from hierarchical clustering is a dendogram, which is a graph that looks like a tree.  We can see from our dendogram below there are 4 distinct clusters.     
+
+Here we are going to start our clustering techniques using hierarchical clustering. The benefits of this clustering type is that we don't need to specify the number of clusters and results are reproducable.
+
+Instead of using all the columns from our data, we decided to only use the column *ADHD.Total* an *MD.Total* to the represent the individual columns combined together. This will help our results to be easier to interpret.
+
+The output from hierarchical clustering is a dendogram, which is a graph that looks like a tree. We can see from our dendogram below there are 4 distinct clusters.
+
 ```{r Clustering-more-data}
 hier_cluster_subset <- adhd_data_3 %>% select(c('Age','Sex','Race','ADHD.Total','MD.TOTAL','Alcohol','THC','Cocaine','Stimulants','Sedative.hypnotics','Opioids','Court.order','Education','Hx.of.Violence','Disorderly.Conduct','Suicide','Abuse','Non.subst.Dx','Subst.Dx','NonSubstDx','SubstDx'))
 hier_cluster_complete <- hclust(dist(hier_cluster_subset),method="complete")
 plot(hier_cluster_complete, hang = -1, cex = 0.6)
 abline(h = 43.5, col = "red")
 ```
-From the above dendogram, we can see there are 4 distinct clusters so we will cut our tree at this level using the function **cutree()**.
-This function returns a vector of cluster assignments, which can be see here:  
+
+From the above dendogram, we can see there are 4 distinct clusters so we will cut our tree at this level using the function **cutree()**. This function returns a vector of cluster assignments, which can be see here:
+
 ```{r Clustering-simple-cut-tree}
 vect_cut <- cutree(hier_cluster_complete,4)
 hier_cluster_subset$cluster_pred <- vect_cut
 vect_cut
 ```
-The above clustering included quite a few columns.  Now we are going to make a simpler clustering dendogram using only *age*,*ADHD.Total*,*MD.TOTAL*.  These columns represent our numeric data.  
+
+The above clustering included quite a few columns. Now we are going to make a simpler clustering dendogram using only *age*,*ADHD.Total*,*MD.TOTAL*. These columns represent our numeric data.
+
 ```{r Clustering-simple}
 hier_cluster_subset_simple <- adhd_data_3 %>% select(c('Age','ADHD.Total','MD.TOTAL'))
 hier_cluster_complete_simple <- hclust(dist(hier_cluster_subset_simple),method="complete")
 plot(hier_cluster_complete_simple, hang = -1, cex = 0.6)
 abline(h = 50, col = "red")
 ```
-Based on the above dendogram, we can see there are 3 distinct clusters.  Again, we will cut our tree and view the output cluster assignments.  
+
+Based on the above dendogram, we can see there are 3 distinct clusters. Again, we will cut our tree and view the output cluster assignments.
+
 ```{r Clustering-cut-tree}
 num_cut = cutree(hier_cluster_complete_simple,3)
 hier_cluster_subset_simple$cluster_pred <- num_cut
 num_cut
 ```
-Here we can see that it appears that cluster 2 had a median and average age of 38.  This cluster's age fits right between cluster 1 & 3.  Cluster 2 had the highest individual scores for reporting ADHD and reporting mood disorder.  It would be interesting to see if there is any data to investigate if this age has any correlation with a mid-life crisis.  Younger participants self reported the lower amount of ADHD and mood disorder.  
+
+Here we can see that it appears that cluster 2 had a median and average age of 38. This cluster's age fits right between cluster 1 & 3. Cluster 2 had the highest individual scores for reporting ADHD and reporting mood disorder. It would be interesting to see if there is any data to investigate if this age has any correlation with a mid-life crisis. Younger participants self reported the lower amount of ADHD and mood disorder.
+
 ```{r }
 results_simple <- hier_cluster_subset_simple %>% dplyr::group_by(cluster_pred) 
 results_simple$Age <- as.numeric(as.character(results_simple$Age))
@@ -350,7 +330,6 @@ results_simple %>% dplyr::summarize(Avg_Age = mean(Age,na.rm=TRUE),
                                     Avg_MD.TOTAL = mean(MD.TOTAL,na.rm=TRUE),
                                     Median_MD.TOTAL = median(MD.TOTAL,na.rm=TRUE))
 ```
-
 
 ## Principal Component Analysis
 
@@ -586,7 +565,7 @@ confusionMatrix(test$pred, test$Suicide)
 
 Linear SVM performs better with a higher Balanced Accuracy. Thus, we will focus on improving the linear SVM.
 
-We used correlation coefficients to select the model variables before. Let's take a different approach and examine some charts of the predictor variables and target variable using the ggpairs function. 
+We used correlation coefficients to select the model variables before. Let's take a different approach and examine some charts of the predictor variables and target variable using the ggpairs function.
 
 ```{r ggpairs, warning = FALSE, message = FALSE}
 #remove individual ADHD and MD question columns, keeping only the total columns
@@ -599,24 +578,25 @@ adhd_data_31$Suicide <- as.factor(adhd_data_3$Suicide)
 
 ggpairs(adhd_data_31, columns = c(4,5,16,21), aes(colour = Suicide, alpha = 0.4))
 ```
+
 From the plots above, particularly the box plots, it is evident that MD.TOTAL and SubstDx separate our target variable pretty well. However, note that there is some overlap between the target variable classes. We will use these two variables in our final model.
 
 ```{r linear2}
 set.seed(125)
-adhd_data_model <- subset(adhd_data_3, select=c(SubstDx, MD.TOTAL, Suicide))
+adhd_data_3_model <- subset(adhd_data_3, select=c(SubstDx, MD.TOTAL, Suicide))
 indexes = createDataPartition(adhd_data_3_model$Suicide, p = .85, list = F) # results not in a List
 train = adhd_data_3_model[indexes, ]
 test = adhd_data_3_model[-indexes, ]
   
 linear_svm_final = svm(factor(Suicide)~., data=train, kernel = "linear", type = 'C-classification', cost = 10, scale = F, class.weights = wts)
-print(linear_svm3)
+print(linear_svm_final)
  
-test$pred = predict(linear_svm_final, test3)
+test$pred = predict(linear_svm_final, test)
  
 confusionMatrix(test$pred, test$Suicide)
 ```
-From the confusion matrix results, we can see that 6 cases were misclassified. Accuracy is 71.43% and balanced accuracy is 75.00%.
 
+From the confusion matrix results, we can see that 6 cases were misclassified. Accuracy is 71.43% and balanced accuracy is 75.00%.
 
 ------------------------------------------------------------------------
 
